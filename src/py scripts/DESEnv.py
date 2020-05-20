@@ -14,9 +14,31 @@ import pandas as pd
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)    # Helps reproduce results.
 
-class Machine(DESEnv):
+
+class MachineRepository:
     """
-    A machine produces parts and may get broken every now and then. 
+    Accessor for all machinery information that can be slected within the simulation environment.
+
+    """
+    def __init__(self):
+        # PT_MEAN - Avg. processing time in minutes
+        # PT_SIGMA - Sigma of processing time
+        # MTTF - Mean time to failure in minutes
+        # REPAIR_TIME - Time it takes to repair a machine in minutes
+        self.MACHINE_CLASSES = {'A': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 300.0, 'REPAIR_TIME': 30.0},
+                                'B': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 400.0, 'REPAIR_TIME': 30.0},
+                                'C': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 50.0, 'REPAIR_TIME': 30.0}}
+
+    def random_machine_class_choice(self):
+        """
+        Choose random machine classification
+        """
+        return random.choice(list(self.MACHINE_CLASSES.keys()))
+
+
+class Machine(MachineRepository):
+    """
+    A machine produces parts and may get broken every now and then.
     
     If it breaks, it requests a 'repairman' and continues the production after it's repaired.
     
@@ -24,7 +46,6 @@ class Machine(DESEnv):
     """
 
     def __init__(self, env, name, classification, repairman):
-        
         super().__init__()
         
         self.env = env
@@ -57,7 +78,7 @@ class Machine(DESEnv):
                     # Working on the part
                     start = self.env.now
                     yield self.env.timeout(done_in)
-                    done_in = 0 # set to 0 to exit the while loop
+                    done_in = 0     # set to 0 to exit the while loop
                 
                 except simpy.Interrupt:
                     # Machine has been broken and process interrupted
@@ -88,53 +109,45 @@ class Machine(DESEnv):
         """
         Return actual processing time for concrete part.
         """
-        return random.normalvariate(self.MACHINE_CLASSES[self.classification]['PT_MEAN'], self.MACHINE_CLASSES[self.classification]['PT_SIGMA'])
+        return random.normalvariate(self.MACHINE_CLASSES[self.classification]['PT_MEAN'],
+                                    self.MACHINE_CLASSES[self.classification]['PT_SIGMA'])
     
     def time_to_failure(self):
         """
         Return time until next failure for a machine.
         """
-        BREAK_MEAN = 1/self.MACHINE_CLASSES[self.classification]['MTTF']   # Param. for expovariate distribution
-        return random.expovariate(BREAK_MEAN)
+        break_mean = 1/self.MACHINE_CLASSES[self.classification]['MTTF']   # Param. for expovariate distribution
+        return random.expovariate(break_mean)
     
     def observe(self):
         """
         Captures machine state history.
         """
         while True:
-            self.stateObs.append([env.now, self.broken])
-            yield env.timeout(1.0)  # Capture very 1 timestep
+            self.stateObs.append([self.env.now, self.broken])
+            yield self.env.timeout(1.0)  # Capture very 1 timestep
         
 
-class DESEnv(Machine):
+class DESEnv(MachineRepository):
     def __init__(self):
-        
         super().__init__()
-        
-        self.create_env()
-        
-        
+
         self.JOB_DURATION = 30.0    # Duration of other jobs in minutes
         self.NUM_MACHINES = 3       # Number of machines in the machine shop
         self.WEEKS = 4              # Simulation time in weeks
         self.SIM_TIME = self.WEEKS * 7 * 24 * 60    # Simulation time in minutes
-        
-        # PT_MEAN - Avg. processing time in minutes
-        # PT_SIGMA - Sigma of processing time
-        # MTTF - Mean time to failure in minutes
-        # REPAIR_TIME - Time it takes to repair a machine in minutes
-        self.MACHINE_CLASSES = {'A': {'PT_MEAN': 10.0,'PT_SIGMA': 2.0,'MTTF': 300.0, 'REPAIR_TIME': 30.0},
-                                'B':{'PT_MEAN': 10.0,'PT_SIGMA': 2.0,'MTTF': 400.0, 'REPAIR_TIME': 30.0},
-                                'C':{'PT_MEAN': 10.0,'PT_SIGMA': 2.0,'MTTF': 50.0, 'REPAIR_TIME': 30.0}}
-        
+
         # Execution
         self.create_env()
-        
+        self.run_env()
+        self.analysis()
+        self.availability()
+
     def other_jobs(self, env, repairman):
         """
         The repairman's other (unimportant) jobs.
         """
-        
+
         while True:
             # Start a new job
             done_in = self.JOB_DURATION
@@ -148,21 +161,51 @@ class DESEnv(Machine):
                     done_in = 0
                 except simpy.Interrupt:
                     done_in -= env.now - start
-        
+
     def create_env(self):
         """
         Create an environment and start the setup process
         """
-        
-        env = simpy.Environment()
-        repairman = simpy.PreemptiveResource(env, capacity=1)
-        machines = []
-        
-    
-    
-    
-    
-    
-    
+
+        self.env = simpy.Environment()
+        repairman = simpy.PreemptiveResource(self.env, capacity=1)
+        self.machines = [Machine(self.env, f'Machine {i}', self.random_machine_class_choice(), repairman) for i in range(self.NUM_MACHINES)]
+        self.env.process(self.other_jobs(self.env, repairman))
+
+    def run_env(self):
+        self.env.run(until=self.SIM_TIME)
+
+    def analysis(self):
+        print(f'Machine shop results after {self.WEEKS} weeks')
+        for machine in self.machines:
+            print(f'{machine.name} ({machine.classification}) made {machine.parts_made} parts')
+
+        def system_stats(machines):
+            # Average number of parts made
+            return np.array([machine.parts_made for machine in self.machines]).mean()
+
+        print(system_stats(self.machines))
+
+    def availability(self):
+        """
+        Calculates the system availability. Currently assumed to be in series configuration.
+        """
+
+        df_store = pd.DataFrame()
+        for machine in self.machines:
+            time = [record[0] for record in machine.stateObs]
+            state = [record[1] for record in machine.stateObs]
+            df = pd.DataFrame(data={'machine': machine.name, 'class': machine.classification,
+                                    'time': time, 'state': state})
+            df_store = pd.concat([df_store, df])
+
+        # Calculate system availability (linear assumption; sums all states together)
+        df_system_state = df_store.groupby(['time'])['state'].sum()
+
+        availability = ((df_system_state == 0).astype(int).sum()/self.SIM_TIME) * 100
+
+        print(f'System availability: {availability:0.2f}%')
+
+
 if __name__ == '__main__':
     des_env = DESEnv()
