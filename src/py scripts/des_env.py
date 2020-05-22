@@ -1,224 +1,179 @@
-"""
-Prototype Discrete Simulation Environment for RAM Modelling.
-
-This model is extended from: https://simpy.readthedocs.io/en/latest/examples/machine_shop.html
-
-@author: Tyler Bikaun
-"""
-
-import random
-import simpy
+# imports
+import gym
+from gym import spaces
 import numpy as np
-import pandas as pd
+import random
 
-RANDOM_SEED = 42
-random.seed(RANDOM_SEED)    # Helps reproduce results.
+# custom import
+from discrete_event_sim import DESEnv
 
 
-class MachineRepository:
+class DiscreteEventSimEnv(gym.Env):
     """
-    Accessor for all machinery information that can be slected within the simulation environment.
+    Define a simple discrete event simulator environment
 
+    The environment defines which actions can be taken at which point and when the agent
+    receives which reward.
     """
+
     def __init__(self):
-        # PT_MEAN - Avg. processing time in minutes
-        # PT_SIGMA - Sigma of processing time
-        # MTTF - Mean time to failure in minutes
-        # REPAIR_TIME - Time it takes to repair a machine in minutes
-        self.MACHINE_CLASSES = {'A': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 300.0, 'REPAIR_TIME': 30.0},
-                                'B': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 400.0, 'REPAIR_TIME': 30.0},
-                                'C': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 50.0, 'REPAIR_TIME': 30.0}}
+        # General variables defining the environment
+        self.TOTAL_TIME_STEPS = 5
+        self.MIN_AVAILABILITY = 0.75
 
-    def random_machine_class_choice(self):
-        """
-        Choose random machine classification
-        """
-        return random.choice(list(self.MACHINE_CLASSES.keys()))
+        self.curr_step = -1
+        self.is_sim_finished = False
 
+        # Define what the agent can do
+        # The agent can:
+        # 1. select the number of machines to use (dictated by system maximum, 10 - this will
+        # be dependent on real life machine spares/availability)
+        # 2. choose which type of machines to use (3 types)
+        # ref:
+        # https://github.com/openai/gym/blob/master/gym/spaces/discrete.py
+        # https://github.com/openai/gym/blob/master/gym/spaces/multi_discrete.py
+        self.action_space = spaces.MultiDiscrete([10, 3])
 
-class Machine(MachineRepository):
-    """
-    A machine produces parts and may get broken every now and then.
-    
-    If it breaks, it requests a 'repairman' and continues the production after it's repaired.
-    
-    A machine has a 'name', 'classification', and a number of 'parts_made' thus far.
-    """
+        # Observation is the remaining time
+        low = np.array([0.0])   # remaining_tries
+        high = np.array([self.TOTAL_TIME_STEPS])    # remaining_tries
+        self.observation_space = spaces.Box(low, high, dtype=np.float32)    # https://github.com/openai/gym/blob/master/gym/spaces/box.py
 
-    def __init__(self, env, name, classification, repairman):
-        super().__init__()
-        
-        self.env = env
-        self.name = name
-        self.classification = classification
-        self.parts_made = 0
-        self.broken = False
-        
-        self.stateObs = []  # history of state observations
-        
-        # Execute
-        self.process = env.process(self.working(repairman))
-        env.process(self.break_machine())
-        env.process(self.observe())
-        
-    def working(self, repairman):
-        """
-        Produce parts as long as the simulation is running.
-        
-        While making a part, the machine may break multiple times.
-        
-        Request a repairman when this happens.
-        """
-        
-        while True:
-            # Start making a new part
-            done_in = self.time_per_part()
-            while done_in:
-                try:
-                    # Working on the part
-                    start = self.env.now
-                    yield self.env.timeout(done_in)
-                    done_in = 0     # set to 0 to exit the while loop
-                
-                except simpy.Interrupt:
-                    # Machine has been broken and process interrupted
-                    self.broken = True
-                    done_in -= self.env.now - start     # How much time is left?
-                    
-                    # Request a repairman. THis will preempt it's "other_job"
-                    with repairman.request(priority=1) as req:
-                        yield req
-                        yield self.env.timeout(self.MACHINE_CLASSES[self.classification]['REPAIR_TIME']) 
+        # Store what the agent tried
+        self.curr_episode = -1
+        self.action_episode_memory = []
 
-                    self.broken = False     # repaired
-                
-            # Part is completed
-            self.parts_made += 1
-        
-    def break_machine(self):
+    def step(self, action):
         """
-        Break machine every now and then.
-        """
-        while True:
-            yield self.env.timeout(self.time_to_failure())  #
-            if not self.broken:
-                # Only break the machine if it is currently working.
-                self.process.interrupt()
+        The agent takes a step in the environment.
 
-    def time_per_part(self):
-        """
-        Return actual processing time for concrete part.
-        """
-        return random.normalvariate(self.MACHINE_CLASSES[self.classification]['PT_MEAN'],
-                                    self.MACHINE_CLASSES[self.classification]['PT_SIGMA'])
-    
-    def time_to_failure(self):
-        """
-        Return time until next failure for a machine.
-        """
-        break_mean = 1/self.MACHINE_CLASSES[self.classification]['MTTF']   # Param. for expovariate distribution
-        return random.expovariate(break_mean)
-    
-    def observe(self):
-        """
-        Captures machine state history.
-        """
-        while True:
-            self.stateObs.append([self.env.now, self.broken])
-            yield self.env.timeout(1.0)  # Capture very 1 timestep
-        
+        Parameters
+        ----------
+        action: int
 
-class DESEnv(MachineRepository):
-    def __init__(self, machine_dict):
-        super().__init__()
+        Returns
+        ------
 
-        self.JOB_DURATION = 30.0    # Duration of other jobs in minutes
-        self.NUM_MACHINES = 3       # Number of machines in the machine shop
-        self.WEEKS = 4              # Simulation time in weeks
-        self.SIM_TIME = self.WEEKS * 7 * 24 * 60    # Simulation time in minutes
-
-        # List of machines and their classes for the simulation
-        # Basic information without configuration atm. Will be updated to be
-        # RDB call.
-        self.machine_dict = machine_dict
-
-        # Execution
-        self.create_env()
-        self.run_env()
-        self.analysis()
-        self.availability()
-
-    def other_jobs(self, env, repairman):
-        """
-        The repairman's other (unimportant) jobs.
+        ob, reward, episode_over, info : tuple
+            ob (object) :
+                an environment-specific object representing your observation of
+                the environment.
+            reward (float) :
+                amount of reward achieved by the previous action. The scale
+                varies between environments, but the goal is always to increase
+                your total reward.
+            episode_over (bool) :
+                whether it's time to reset the environment again. Most (but not
+                all) tasks are divided up into well-defined episodes, and done
+                being True indicates the episode was terminated. (For example,
+                perhaps the pile tipped too far, or you lost your last life.)
+            info (dict) :
+                diagnostic information useful for debugging. It can sometimes
+                be useful for learning (for example, it might contain the raw
+                probabilities behind the environment's last state change).
+                However, official evaluations of your agent are not allowed
+                to use this for learning.
         """
 
-        while True:
-            # Start a new job
-            done_in = self.JOB_DURATION
-            # Retry the job until it is done
-            # It's priority is lower than that of the machine repairs.
-            with repairman.request(priority=2) as req:
-                yield req
-                try:
-                    start = env.now
-                    yield env.timeout(done_in)
-                    done_in = 0
-                except simpy.Interrupt:
-                    done_in -= env.now - start
+        if self.is_sim_finished:
+            raise RuntimeError("Episode is done")
 
-    def create_env(self):
+        self.curr_step += 1
+        self._take_action(action)
+
+        reward = self._get_reward()
+        ob = self._get_state()
+        return ob, reward, self.is_sim_finished, {}
+
+    def _take_action(self, action):
+        self.action_episode_memory[self.curr_episode].append(action)
+
+        if 0 < action[0]:   # the agent might choose zero machines and cause an issue in this section...
+            def generate_machine_dict(action):
+                """Generates dictionary of machines and their classes to pass to
+                discrete event simulation environment"""
+
+                machine_class_map = {0: 'A', 1: 'B', 2: 'C'}    # TODO: Change this to either or and get rid of map.
+
+                machine_dict = {}
+                for machine_no in range(action[0]):     # first col is the number of machines
+                    machine_dict[machine_no] = machine_class_map[action[1]]
+                return machine_dict
+            # Generate machine dictionary
+            machine_dict = generate_machine_dict(action)
+            # Discrete Event Simulation
+            des_env_out = DESEnv(machine_dict)
+
+            # input agent action; return system availability
+            self.sim_availability = des_env_out.availability
+            sim_is_finished = self.MIN_AVAILABILITY < self.sim_availability
+
+            if sim_is_finished:
+                self.is_sim_finished = True
+
+        self.remaining_steps = self.TOTAL_TIME_STEPS - self.curr_step
+        time_is_over = self.remaining_steps <= 0
+
+        if time_is_over:    # Should this also be that if the agent has n consecutive low availabilities, it exits?
+            self.is_sim_finished = True # abuse this a bit.
+
+
+    def _get_reward(self):
+            """Reward is given for getting a high availability within the least number of steps"""
+            if self.is_sim_finished:
+                # This can be figured out in the future...
+                # Can incorporate costs, number of machines, etc etc.
+                return self.sim_availability * self.remaining_steps
+            else:
+                return 0.0
+
+    def reset(self):
         """
-        Create an environment and start the setup process
+        Reset the state of the environment and returns an initial observation.
+
+        Returns
+        -------
+        observation (object) : the initial observation of the space.
         """
+        self.curr_step = -1
+        self.curr_episode += 1
+        self.action_episode_memory.append([])
+        self.is_sim_finished = False
+        return self._get_state()
 
-        self.env = simpy.Environment()
-        repairman = simpy.PreemptiveResource(self.env, capacity=1)
+    def _render(self, mode="human", close=False):
+        return
 
-        # Populate machines in the workshop
-        # via dictionary. Agent will pass this information to simulation.
-        self.machines = []
-        for machine_no, machine_class in self.machine_dict.items():
-            self.machines.append(Machine(self.env, f'Machine {machine_no}', machine_class, repairman))
-        self.env.process(self.other_jobs(self.env, repairman))
+    def _get_state(self):
+        """Get the observation."""
+        ob = [self.TOTAL_TIME_STEPS - self.curr_step]
+        return ob
 
-    def run_env(self):
-        self.env.run(until=self.SIM_TIME)
-
-    def analysis(self):
-        print(f'Machine shop results after {self.WEEKS} weeks')
-        for machine in self.machines:
-            print(f'{machine.name} ({machine.classification}) made {machine.parts_made} parts')
-
-        def system_stats(machines):
-            # Average number of parts made
-            return np.array([machine.parts_made for machine in self.machines]).mean()
-
-        print(system_stats(self.machines))
-
-    def availability(self):
-        """
-        Calculates the system availability. Currently assumed to be in series configuration.
-        """
-
-        df_store = pd.DataFrame()
-        for machine in self.machines:
-            time = [record[0] for record in machine.stateObs]
-            state = [record[1] for record in machine.stateObs]
-            df = pd.DataFrame(data={'machine': machine.name, 'class': machine.classification,
-                                    'time': time, 'state': state})
-            df_store = pd.concat([df_store, df])
-
-        # Calculate system availability (linear assumption; sums all states together)
-        df_system_state = df_store.groupby(['time'])['state'].sum()
-
-        self.availability = ((df_system_state == 0).astype(int).sum()/self.SIM_TIME)
-
-        print(f'System availability: {self.availability*100:0.2f}%')
+    def seed(self, seed):
+        random.seed(seed)
+        np.random.seed
 
 
 if __name__ == '__main__':
-    machine_dict = {0: 'C',
-                    1: 'A',
-                    2: 'B'}
-    des_env = DESEnv(machine_dict)
+    # initialise environment
+    env = DiscreteEventSimEnv()
+
+    # Run for n episodes
+    no_episodes = 1
+    print(f'Running for {no_episodes} episodes')
+    for episode in range(no_episodes):
+        # reset environment
+        env.reset()
+        while not env.is_sim_finished:
+            # take random action
+            random_action = env.action_space.sample()
+            print(f'Random action {random_action}')
+            ob, reward, _, _ = env.step(random_action)
+            print(f'Observation (time steps remaining): {ob[0]}\nReward: {reward}\n')
+
+        print(f'Sim finished? {env.is_sim_finished}\n')
+
+    history_string = "\n".join([f"Actions (Machines:{str(x[0][0])} | Types {str(x[0][1])})" for x in env.action_episode_memory])
+    print(f'---History---\n{history_string}\n')
+
+
