@@ -14,7 +14,6 @@ import pandas as pd
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)    # Helps reproduce results.
 
-
 class MachineRepository:
     """
     Accessor for all machinery information that can be slected within the simulation environment.
