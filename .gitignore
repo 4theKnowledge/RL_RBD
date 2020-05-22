@@ -1,6 +1,8 @@
 # Custom exclusions
 doc/
 reliability/
+banana-gym-master/
+
 
 *.xlsx
 *.csv
