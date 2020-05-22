@@ -5,7 +5,7 @@ import numpy as np
 import random
 
 # custom import
-import DESEnv
+from des_env import des_env
 
 
 class DiscreteEventSimEnv(gym.Env):
@@ -25,8 +25,14 @@ class DiscreteEventSimEnv(gym.Env):
         self.is_sim_finished = False
 
         # Define what the agent can do
-        # Sell at 0.00 Euro, 0.10 Euro, ..., 2.00 Euro
-        self.action_space = spaces.Discrete(4)      # https://github.com/openai/gym/blob/master/gym/spaces/discrete.py
+        # The agent can:
+        # 1. select the number of machines to use (dictated by system maximum, 10 - this will
+        # be dependent on real life machine spares/availability)
+        # 2. choose which type of machines to use (3 types)
+        # ref:
+        # https://github.com/openai/gym/blob/master/gym/spaces/discrete.py
+        # https://github.com/openai/gym/blob/master/gym/spaces/multi_discrete.py
+        self.action_space = spaces.MultiDiscrete([10, 3])
 
         # Observation is the remaining time
         low = np.array([0.0])   # remaining_tries
@@ -82,11 +88,28 @@ class DiscreteEventSimEnv(gym.Env):
     def _take_action(self, action):
         self.action_episode_memory[self.curr_episode].append(action)
 
-        self.sim_availability = random.random() #des_sim(action)      # input agent action; return system availability
-        sim_is_finished = self.MIN_AVAILABILITY < self.sim_availability
+        if 0 < action[0]:   # the agent might choose zero machines and cause an issue in this section...
+            def generate_machine_dict(action):
+                """Generates dictionary of machines and their classes to pass to
+                discrete event simulation environment"""
 
-        if sim_is_finished:
-            self.is_sim_finished = True
+                machine_class_map = {0: 'A', 1: 'B', 2: 'C'}    # TODO: Change this to either or and get rid of map.
+
+                machine_dict = {}
+                for machine_no in range(action[0]):     # first col is the number of machines
+                    machine_dict[machine_no] = machine_class_map[action[1]]
+                return machine_dict
+            # Generate machine dictionary
+            machine_dict = generate_machine_dict(action)
+            # Discrete Event Simulation
+            des_env = des_env(machine_dict)
+
+            # input agent action; return system availability
+            self.sim_availability = des_env.availability
+            sim_is_finished = self.MIN_AVAILABILITY < self.sim_availability
+
+            if sim_is_finished:
+                self.is_sim_finished = True
 
         self.remaining_steps = self.TOTAL_TIME_STEPS - self.curr_step
         time_is_over = self.remaining_steps <= 0
@@ -94,14 +117,12 @@ class DiscreteEventSimEnv(gym.Env):
         if time_is_over:    # Should this also be that if the agent has n consecutive low availabilities, it exits?
             self.is_sim_finished = True # abuse this a bit.
 
-        # throw_away = time_is_over and not self.is_banana_sold
-        # if throw_away:
-        #     self.is_banana_sold = True  # abuse this a bit
-        #     self.price = 0.0
 
     def _get_reward(self):
             """Reward is given for getting a high availability within the least number of steps"""
             if self.is_sim_finished:
+                # This can be figured out in the future...
+                # Can incorporate costs, number of machines, etc etc.
                 return self.sim_availability * self.remaining_steps
             else:
                 return 0.0
@@ -137,8 +158,9 @@ if __name__ == '__main__':
     # initialise environment
     env = DiscreteEventSimEnv()
 
+
     # Run for n episodes
-    no_episodes = 10
+    no_episodes = 1
     print(f'Running for {no_episodes} episodes')
     for episode in range(no_episodes):
         # reset environment
@@ -148,9 +170,11 @@ if __name__ == '__main__':
             random_action = env.action_space.sample()
             print(f'Random action {random_action}')
             ob, reward, _, _ = env.step(random_action)
-            print(f'Observation (time steps remaining): {ob[0]}\nReward: {reward}')
+            print(f'Observation (time steps remaining): {ob[0]}\nReward: {reward}\n')
 
         print(f'Sim finished? {env.is_sim_finished}\n')
 
-    history_string = "\n".join([f"Action: {str(x[0])}" for x in env.action_episode_memory])
+    history_string = "\n".join([f"Actions (Machines:{str(x[0][0])} | Types {str(x[0][1])})" for x in env.action_episode_memory])
     print(f'---History---\n{history_string}\n')
+
+

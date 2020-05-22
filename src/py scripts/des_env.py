@@ -14,6 +14,7 @@ import pandas as pd
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)    # Helps reproduce results.
 
+
 class MachineRepository:
     """
     Accessor for all machinery information that can be slected within the simulation environment.
@@ -128,13 +129,18 @@ class Machine(MachineRepository):
         
 
 class DESEnv(MachineRepository):
-    def __init__(self):
+    def __init__(self, machine_dict):
         super().__init__()
 
         self.JOB_DURATION = 30.0    # Duration of other jobs in minutes
         self.NUM_MACHINES = 3       # Number of machines in the machine shop
         self.WEEKS = 4              # Simulation time in weeks
         self.SIM_TIME = self.WEEKS * 7 * 24 * 60    # Simulation time in minutes
+
+        # List of machines and their classes for the simulation
+        # Basic information without configuration atm. Will be updated to be
+        # RDB call.
+        self.machine_dict = machine_dict
 
         # Execution
         self.create_env()
@@ -168,7 +174,12 @@ class DESEnv(MachineRepository):
 
         self.env = simpy.Environment()
         repairman = simpy.PreemptiveResource(self.env, capacity=1)
-        self.machines = [Machine(self.env, f'Machine {i}', self.random_machine_class_choice(), repairman) for i in range(self.NUM_MACHINES)]
+
+        # Populate machines in the workshop
+        # via dictionary. Agent will pass this information to simulation.
+        self.machines = []
+        for machine_no, machine_class in self.machine_dict.items():
+            self.machines.append(Machine(self.env, f'Machine {machine_no}', machine_class, repairman))
         self.env.process(self.other_jobs(self.env, repairman))
 
     def run_env(self):
@@ -201,10 +212,13 @@ class DESEnv(MachineRepository):
         # Calculate system availability (linear assumption; sums all states together)
         df_system_state = df_store.groupby(['time'])['state'].sum()
 
-        availability = ((df_system_state == 0).astype(int).sum()/self.SIM_TIME) * 100
+        self.availability = ((df_system_state == 0).astype(int).sum()/self.SIM_TIME)
 
-        print(f'System availability: {availability:0.2f}%')
+        print(f'System availability: {self.availability*100:0.2f}%')
 
 
 if __name__ == '__main__':
-    des_env = DESEnv()
+    machine_dict = {0: 'C',
+                    1: 'A',
+                    2: 'B'}
+    des_env = DESEnv(machine_dict)
