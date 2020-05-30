@@ -3,6 +3,9 @@ Prototype Discrete Simulation Environment for RAM Modelling.
 
 This model is extended from: https://simpy.readthedocs.io/en/latest/examples/machine_shop.html
 
+Instead of being told a list of machines to feed in, it takes a DAG with nodes that indicate
+the type of machine.
+
 @author: Tyler Bikaun
 """
 
@@ -13,6 +16,8 @@ import pandas as pd
 
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)    # Helps reproduce results.
+
+from system_graph import SystemGraph
 
 
 class MachineRepository:
@@ -25,9 +30,9 @@ class MachineRepository:
         # PT_SIGMA - Sigma of processing time
         # MTTF - Mean time to failure in minutes
         # REPAIR_TIME - Time it takes to repair a machine in minutes
-        self.MACHINE_CLASSES = {'A': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 300.0, 'REPAIR_TIME': 30.0},
-                                'B': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 400.0, 'REPAIR_TIME': 30.0},
-                                'C': {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 50.0, 'REPAIR_TIME': 30.0}}
+        self.MACHINE_CLASSES = {0: {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 300.0, 'REPAIR_TIME': 30.0},
+                                1: {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 400.0, 'REPAIR_TIME': 30.0},
+                                2: {'PT_MEAN': 10.0, 'PT_SIGMA': 2.0, 'MTTF': 50.0, 'REPAIR_TIME': 30.0}}
 
     def random_machine_class_choice(self):
         """
@@ -129,7 +134,7 @@ class Machine(MachineRepository):
         
 
 class DESEnv(MachineRepository):
-    def __init__(self, machine_dict):
+    def __init__(self, system_graph):
         super().__init__()
 
         self.JOB_DURATION = 30.0    # Duration of other jobs in minutes
@@ -140,7 +145,9 @@ class DESEnv(MachineRepository):
         # List of machines and their classes for the simulation
         # Basic information without configuration atm. Will be updated to be
         # RDB call.
-        self.machine_dict = machine_dict
+        # self.machine_dict = machine_dict
+        self.system_graph = system_graph
+        self.node_list = system_graph.get_node_details()    # used to get idx and label of machines in workshop
 
         # Execution
         self.create_env()
@@ -175,10 +182,10 @@ class DESEnv(MachineRepository):
         self.env = simpy.Environment()
         repairman = simpy.PreemptiveResource(self.env, capacity=1)
 
-        # Populate machines in the workshop
-        # via dictionary. Agent will pass this information to simulation.
+        # POPULATE MACHINES IN THE WORKSHOP USING SYSTEM DAG
+        # Note: an agent will pass this information to simulation.
         self.machines = []
-        for machine_no, machine_class in self.machine_dict.items():
+        for machine_no, machine_class in self.node_list.items():
             self.machines.append(Machine(self.env, f'Machine {machine_no}', machine_class, repairman))
         self.env.process(self.other_jobs(self.env, repairman))
 
@@ -218,7 +225,30 @@ class DESEnv(MachineRepository):
 
 
 if __name__ == '__main__':
-    machine_dict = {0: 'C',
-                    1: 'A',
-                    2: 'B'}
-    des_env = DESEnv(machine_dict)
+    # machine_dict = {0: 'C',
+    #                 1: 'A',
+    #                 2: 'B'}
+
+    # A - adjacency matrix (node and edges)
+    # an entire row of 1s indicates arrows away FROM the node,
+    # an entire column of 1s indicates arrows TO the node
+    A = np.array([[0, 1, 0, 0, 0, 0],
+                  [0, 0, 1, 0, 0, 0],
+                  [0, 0, 0, 1, 0, 0],
+                  [0, 0, 0, 0, 1, 0],
+                  [0, 0, 0, 0, 0, 1],
+                  [0, 0, 0, 0, 0, 0]])  # series configuration
+
+    # F - feature list (node type)
+    # row indicates node
+    # col indicates node type
+    F = np.array([[0, 1, 0],
+                  [0, 0, 1],
+                  [1, 0, 0],
+                  [1, 0, 0],
+                  [1, 0, 0],
+                  [1, 0, 0]])
+
+
+    sys_graph = SystemGraph(A, F)
+    des_env = DESEnv(sys_graph)
