@@ -82,10 +82,7 @@ class Machine(MachineRepository):
         
     def working(self, repairman):
         """ Produce parts as long as the simulation is active. While making a part, the machine may break multiple times. If breakage occurs, a repairman is requested. 
-        
-        Arguments
-        ---------
-            repairman : TODO
+        slected
                 TODO
         Returns
         -------
