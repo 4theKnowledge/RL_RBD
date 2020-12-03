@@ -25,5 +25,3 @@ print(f'\nFeature List:\n{F}')
 # print(A[:,0])
 # print()
 # print(A[:,:2])
-
-import

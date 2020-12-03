@@ -1,5 +1,5 @@
 """
-Generates a system DAG for reliability modelling.
+Generates a Directed Acyclic Graph (DAG) of a specified system for reliability modelling.
 
 @author: Tyler Bikaun
 """
@@ -99,9 +99,6 @@ class SystemGraph:
 
 
 def main():
-    """
-
-    """
     # A - adjacency matrix (node and edges)
     # an entire row of 1s indicates arrows away FROM the node,
     # an entire column of 1s indicates arrows TO the node
@@ -126,7 +123,7 @@ def main():
     sys_graph.print_graph_details()
     node_dict = sys_graph.get_node_details()
     # print(node_dict)
-    # sys_graph.render()
+    sys_graph.render()
 
     """
     sys_graph.add_node(0)

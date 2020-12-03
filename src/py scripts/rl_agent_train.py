@@ -137,7 +137,7 @@ def test_run():
         # Reset flag and start iterating until episode ends
         done = False
         while not done:
-
+            print('hello')
             done = True
 
 

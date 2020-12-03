@@ -14,17 +14,15 @@ import simpy
 import numpy as np
 import pandas as pd
 
-RANDOM_SEED = 42
-random.seed(RANDOM_SEED)    # Helps reproduce results.
+# Helps reproduce results
+# RANDOM_SEED = 42
+# random.seed(RANDOM_SEED)
 
 from system_graph import SystemGraph
 
 
 class MachineRepository:
-    """
-    Accessor for all machinery information that can be slected within the simulation environment.
-
-    """
+    """ Accessor for all machinery information that can be selected within the simulation environment """
     def __init__(self):
         # PT_MEAN - Avg. processing time in minutes
         # PT_SIGMA - Sigma of processing time
@@ -42,12 +40,28 @@ class MachineRepository:
 
 
 class Machine(MachineRepository):
-    """
-    A machine produces parts and may get broken every now and then.
+    """ 
+    Logic: A machine will produces parts but may get broken every now and then. If it breaks, it requests a 'repairman' and resumes production once repaired.
     
-    If it breaks, it requests a 'repairman' and continues the production after it's repaired.
+    Current implementation includes:
+        - Machines having distinct names, classifications and number of 'parts_made' thus far
     
-    A machine has a 'name', 'classification', and a number of 'parts_made' thus far.
+    Arguments
+    ---------
+        env : TODO
+            TODO
+        name : str
+            Name of machine object
+        classification : str
+            Classification of machine object
+        repairman : TODO
+            TODO
+    Returns
+    -------
+    
+    Notes
+    -----
+    
     """
 
     def __init__(self, env, name, classification, repairman):
@@ -67,12 +81,18 @@ class Machine(MachineRepository):
         env.process(self.observe())
         
     def working(self, repairman):
-        """
-        Produce parts as long as the simulation is running.
+        """ Produce parts as long as the simulation is active. While making a part, the machine may break multiple times. If breakage occurs, a repairman is requested. 
         
-        While making a part, the machine may break multiple times.
+        Arguments
+        ---------
+            repairman : TODO
+                TODO
+        Returns
+        -------
         
-        Request a repairman when this happens.
+        Notes
+        -----
+        
         """
         
         while True:
@@ -101,9 +121,7 @@ class Machine(MachineRepository):
             self.parts_made += 1
         
     def break_machine(self):
-        """
-        Break machine every now and then.
-        """
+        """ Initiate machine breakage on time to failure parameter """
         while True:
             yield self.env.timeout(self.time_to_failure())  #
             if not self.broken:
@@ -111,29 +129,30 @@ class Machine(MachineRepository):
                 self.process.interrupt()
 
     def time_per_part(self):
-        """
-        Return actual processing time for concrete part.
-        """
+        """ Return actual processing time for concrete part """
         return random.normalvariate(self.MACHINE_CLASSES[self.classification]['PT_MEAN'],
                                     self.MACHINE_CLASSES[self.classification]['PT_SIGMA'])
     
     def time_to_failure(self):
-        """
-        Return time until next failure for a machine.
-        """
+        """ Return time until next failure for a machine """
         break_mean = 1/self.MACHINE_CLASSES[self.classification]['MTTF']   # Param. for expovariate distribution
         return random.expovariate(break_mean)
     
     def observe(self):
-        """
-        Captures machine state history.
-        """
+        """ Captures machine state history """
         while True:
             self.stateObs.append([self.env.now, self.broken])
             yield self.env.timeout(1.0)  # Capture very 1 timestep
         
 
 class DESEnv(MachineRepository):
+    """ Discrete Event Simulation Environment (DESEnv)
+    
+    Arguments
+    ---------
+        system_graph : TODO
+            Graph object of system configuration.
+    """
     def __init__(self, system_graph):
         super().__init__()
 
@@ -156,8 +175,20 @@ class DESEnv(MachineRepository):
         self.availability()
 
     def other_jobs(self, env, repairman):
-        """
-        The repairman's other (unimportant) jobs.
+        """ Repairman's other (unimportant) jobs
+        
+        Arguments
+        ---------
+            env : TODO
+                TODO
+            repairman : TODO
+                TODO
+        Returns
+        -------
+        
+        Notes
+        -----
+        
         """
 
         while True:
@@ -175,9 +206,7 @@ class DESEnv(MachineRepository):
                     done_in -= env.now - start
 
     def create_env(self):
-        """
-        Create an environment and start the setup process
-        """
+        """ Create an environment and start the set-up process """
 
         self.env = simpy.Environment()
         repairman = simpy.PreemptiveResource(self.env, capacity=1)
@@ -193,6 +222,8 @@ class DESEnv(MachineRepository):
         self.env.run(until=self.SIM_TIME)
 
     def analysis(self):
+        """ """
+        
         print(f'Machine shop results after {self.WEEKS} weeks')
         for machine in self.machines:
             print(f'{machine.name} ({machine.classification}) made {machine.parts_made} parts')
@@ -204,9 +235,7 @@ class DESEnv(MachineRepository):
         print(system_stats(self.machines))
 
     def availability(self):
-        """
-        Calculates the system availability. Currently assumed to be in series configuration.
-        """
+        """ Calculates the system availability. Currently assumed to be in series configuration """
 
         df_store = pd.DataFrame()
         for machine in self.machines:
@@ -249,6 +278,8 @@ if __name__ == '__main__':
                   [1, 0, 0],
                   [1, 0, 0]])
 
-
+    # Generate system graph from adjacency matrix and feature list 
     sys_graph = SystemGraph(A, F)
+    
+    # Run discrete event simulation over system graph
     des_env = DESEnv(sys_graph)
